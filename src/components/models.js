@@ -326,9 +326,9 @@ export function renderCaseModelSVG(caseId) {
       <circle cx="200" cy="192" r="112" fill="#e8bfd0" stroke="#bd7f98" stroke-width="1"/>
       ${epithelioidCells}
       <!-- Langhans multinucleated giant cells -->
-      ${giantCell(264, 228, 35)}
+      ${giantCell(272, 144, 120)}
+      ${giantCell(258, 232, 35)}
       ${giantCell(142, 134, -40)}
-      ${giantCell(252, 136, 120)}
       <!-- Central caseous necrosis -->
       <path d="M150,150 Q200,124 246,154 Q266,192 238,224 Q192,238 156,214 Q134,182 150,150 Z"
         fill="#f2c4cf" stroke="#c98597" stroke-width="1.5"/>

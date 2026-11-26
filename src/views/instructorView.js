@@ -154,7 +154,7 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     const vis = renderOrientationVisual({
       itemId: item.id,
       shown,
-      mediaMode: oriMediaMode[mediaKey] || null,
+      mediaMode: rs.oriMediaMode?.[mediaKey] || oriMediaMode[mediaKey] || null,
       roomOverrides: snap.mediaOverrides,
       onToggleModeAttr: `data-inst-ori-media="${escapeHtml(mediaKey)}"`,
     });
@@ -347,9 +347,10 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     }
 
     if (rs.stage === 2) {
-      const revealed = revealedZones[c.id] || new Set();
+      const syncedRevealed = rs.revealedZones?.[c.id] || [];
+      const revealed = new Set([...(revealedZones[c.id] || []), ...syncedRevealed]);
       const zones = resolveCaseZones(c, snap.mediaOverrides);
-      const medOpen = Boolean(mediatorsOpen[c.id]);
+      const medOpen = Boolean(rs.mediatorsOpen?.[c.id] ?? mediatorsOpen[c.id]);
       const callout = activeZoneCallout[c.id];
 
       return `
@@ -361,7 +362,7 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
           ${renderCaseSlideViewer({
             caseObj: c,
             revealedZones: revealed,
-            mediaMode: caseMediaMode[c.id] || null,
+            mediaMode: rs.caseMediaMode?.[c.id] || caseMediaMode[c.id] || null,
             spotlightZoneId: rs.spotlightZoneId,
             roomOverrides: snap.mediaOverrides,
           })}
@@ -547,7 +548,8 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       btn.addEventListener('click', () => {
         const key = btn.closest('[data-inst-ori-media]').dataset.instOriMedia;
         oriMediaMode[key] = btn.dataset.mediaMode;
-        onRerender();
+        const nextOri = { ...(snap.state.oriMediaMode || {}), [key]: btn.dataset.mediaMode };
+        roomSession.updateRoomState({ oriMediaMode: nextOri });
       });
     });
     container.querySelector('#inst-ori-prev')?.addEventListener('click', () => {
@@ -627,7 +629,8 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     container.querySelectorAll(`[data-case-media-toggle="${c.id}"] button`).forEach((btn) => {
       btn.addEventListener('click', () => {
         caseMediaMode[c.id] = btn.dataset.mediaMode;
-        onRerender();
+        const nextCaseMedia = { ...(snap.state.caseMediaMode || {}), [c.id]: btn.dataset.mediaMode };
+        roomSession.updateRoomState({ caseMediaMode: nextCaseMedia });
       });
     });
     container.querySelectorAll(`#slide-wrap-${c.id} .zone-pin`).forEach((pin) => {
@@ -636,11 +639,12 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
         const idx = Number(pin.dataset.zoneIdx);
         const zones = resolveCaseZones(c, snap.mediaOverrides);
         const zone = zones.find((z) => z.id === zoneId);
-        if (!revealedZones[c.id]) revealedZones[c.id] = new Set();
-        revealedZones[c.id].add(zoneId);
+        const synced = snap.state.revealedZones?.[c.id] || [];
+        const nextSet = new Set([...(revealedZones[c.id] || []), ...synced, zoneId]);
+        revealedZones[c.id] = nextSet;
         activeZoneCallout[c.id] = { idx, zone };
-        roomSession.updateRoomState({ spotlightZoneId: zoneId });
-        onRerender();
+        const nextRevealedMap = { ...(snap.state.revealedZones || {}), [c.id]: Array.from(nextSet) };
+        roomSession.updateRoomState({ spotlightZoneId: zoneId, revealedZones: nextRevealedMap });
       });
     });
     container.querySelector('#inst-clear-zone-spot')?.addEventListener('click', () => {
@@ -648,18 +652,22 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     });
     container.querySelector('#inst-reveal-all-zones')?.addEventListener('click', () => {
       const zones = resolveCaseZones(c, snap.mediaOverrides);
-      revealedZones[c.id] = new Set(zones.map((z) => z.id));
-      onRerender();
+      const allIds = zones.map((z) => z.id);
+      revealedZones[c.id] = new Set(allIds);
+      const nextRevealedMap = { ...(snap.state.revealedZones || {}), [c.id]: allIds };
+      roomSession.updateRoomState({ revealedZones: nextRevealedMap });
     });
     container.querySelector('#inst-reset-zones')?.addEventListener('click', () => {
       revealedZones[c.id] = new Set();
       delete activeZoneCallout[c.id];
-      roomSession.updateRoomState({ spotlightZoneId: null });
-      onRerender();
+      const nextRevealedMap = { ...(snap.state.revealedZones || {}), [c.id]: [] };
+      roomSession.updateRoomState({ spotlightZoneId: null, revealedZones: nextRevealedMap });
     });
     container.querySelector('#inst-med-toggle')?.addEventListener('click', () => {
-      mediatorsOpen[c.id] = !mediatorsOpen[c.id];
-      onRerender();
+      const curOpen = Boolean(snap.state.mediatorsOpen?.[c.id] ?? mediatorsOpen[c.id]);
+      mediatorsOpen[c.id] = !curOpen;
+      const nextMedMap = { ...(snap.state.mediatorsOpen || {}), [c.id]: !curOpen };
+      roomSession.updateRoomState({ mediatorsOpen: nextMedMap });
     });
 
     // Stage 3 Elaborate

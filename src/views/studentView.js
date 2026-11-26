@@ -38,11 +38,48 @@ export function createStudentController(onRerender) {
   let lastSyncedKey = '';
   let lastInstructorSpotlightId = null;
 
+  function hydrateFromRoomState(rs) {
+    if (!rs) return;
+    if (rs.pacingMode === 'instructor') {
+      local.view = rs.view || 'orient';
+      local.orientIdx = rs.orientIdx ?? 0;
+      local.caseIdx = rs.caseIdx ?? 0;
+      local.stage = rs.stage ?? 0;
+      const curOri = ORIENTATION[local.orientIdx];
+      if (curOri && rs.orientPair) {
+        local.orientPairShown[curOri.id] = rs.orientPair;
+      }
+    }
+    if (rs.revealedZones) {
+      Object.entries(rs.revealedZones).forEach(([cid, arr]) => {
+        if (!Array.isArray(arr) || !arr.length) return;
+        if (!local.zonesRevealed[cid]) local.zonesRevealed[cid] = new Set();
+        arr.forEach((zid) => local.zonesRevealed[cid].add(zid));
+      });
+    }
+    if (rs.mediatorsOpen) {
+      Object.entries(rs.mediatorsOpen).forEach(([cid, open]) => {
+        if (open) local.mediatorsOpen[cid] = true;
+      });
+    }
+    if (rs.caseMediaMode) {
+      Object.entries(rs.caseMediaMode).forEach(([cid, mode]) => {
+        if (mode && !local.caseMediaMode[cid]) local.caseMediaMode[cid] = mode;
+      });
+    }
+    if (rs.oriMediaMode) {
+      Object.entries(rs.oriMediaMode).forEach(([k, mode]) => {
+        if (mode && !local.orientMediaMode[k]) local.orientMediaMode[k] = mode;
+      });
+    }
+  }
+
   const unsub = roomSession.subscribe((nextSnap) => {
     snap = nextSnap;
     if (local.mode === 'live' && snap.connected) {
       const rs = snap.state;
-      const syncKey = `${rs.view}|${rs.orientIdx}|${rs.caseIdx}|${rs.stage}|${rs.pollStatus}|${rs.pacingMode}|${rs.bypassWarmup}|${rs.spotlightZoneId}|${rs.spotlightReasoningId}`;
+      hydrateFromRoomState(rs);
+      const syncKey = `${rs.view}|${rs.orientIdx}|${rs.orientPair}|${rs.caseIdx}|${rs.stage}|${rs.pollStatus}|${rs.pacingMode}|${rs.bypassWarmup}|${rs.spotlightZoneId}|${rs.spotlightReasoningId}|${JSON.stringify(rs.revealedZones || {})}|${JSON.stringify(rs.mediatorsOpen || {})}`;
       const activeId = document.activeElement?.id || '';
       const typing =
         activeId.startsWith('student-reasoning-') ||
@@ -76,6 +113,7 @@ export function createStudentController(onRerender) {
   async function joinLiveRoom(code, name) {
     local.joining = true;
     local.joinError = '';
+    local.mode = 'live';
     onRerender();
     try {
       const clean = String(code || '').trim().toUpperCase();
@@ -84,10 +122,11 @@ export function createStudentController(onRerender) {
         local.studentName = String(name || '').trim();
       }
       persistLocal();
-      await roomSession.connect(clean, 'student', local.studentName || 'Student', false);
-      local.mode = 'live';
+      const connectedSnap = await roomSession.connect(clean, 'student', local.studentName || 'Student', false);
       local.joining = false;
-      snap = roomSession.getSnapshot();
+      snap = connectedSnap;
+      hydrateFromRoomState(snap.state);
+      lastSyncedKey = '';
       onRerender();
     } catch (err) {
       local.joining = false;

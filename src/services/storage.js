@@ -15,11 +15,10 @@ function randomId(prefix = 'stu') {
 export function getOrCreateClientId(prefix = 'stu') {
   const key = `imc530_client_id_${prefix}`;
   try {
-    let id = sessionStorage.getItem(key) || localStorage.getItem(key);
+    let id = sessionStorage.getItem(key);
     if (!id) {
       id = randomId(prefix);
       sessionStorage.setItem(key, id);
-      localStorage.setItem(key, id);
     }
     return id;
   } catch {

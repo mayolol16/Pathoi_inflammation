@@ -29,10 +29,10 @@ export const CASES = [
     image: {
       placeholderLabel: 'Slide #514 — appendix, whole mount, H&E',
       zones: [
-        { id: 'lumen', label: 'Lumen', x: 50, y: 38, finding: 'Purulent exudate filling the lumen — neutrophils packed into the central space.' },
-        { id: 'mucosa', label: 'Mucosa', x: 40, y: 58, finding: 'Mucosal erosion — the epithelial lining is disrupted and partially lost.' },
-        { id: 'wall', label: 'Muscularis wall', x: 62, y: 70, finding: 'Neutrophilic infiltration of the muscularis propria — this is the feature required to call it acute appendicitis.' },
-        { id: 'serosa', label: 'Serosa', x: 78, y: 50, finding: 'Serositis where inflammation has reached the outer surface — congestion and hemorrhage visible.' },
+        { id: 'lumen', label: 'Lumen', x: 50, y: 46, finding: 'Purulent exudate filling the lumen — neutrophils packed into the central space.' },
+        { id: 'mucosa', label: 'Mucosa', x: 37, y: 55, finding: 'Mucosal erosion — the epithelial lining is disrupted and partially lost.' },
+        { id: 'wall', label: 'Muscularis wall', x: 68, y: 66, finding: 'Neutrophilic infiltration of the muscularis propria — this is the feature required to call it acute appendicitis.' },
+        { id: 'serosa', label: 'Serosa', x: 82, y: 48, finding: 'Serositis where inflammation has reached the outer surface — congestion and hemorrhage visible.' },
       ],
     },
     diagnosis: {
@@ -86,10 +86,10 @@ export const CASES = [
     image: {
       placeholderLabel: 'Slide #1C27 — gastrectomy specimen, peptic ulcer',
       zones: [
-        { id: 'mucosa', label: 'Mucosa margin', x: 30, y: 30, finding: 'Mucosa at the ulcer margin, with adjacent regenerating epithelium.' },
-        { id: 'submucosa', label: 'Submucosa', x: 55, y: 42, finding: 'Submucosa shows acute inflammatory exudate over granulation tissue — active injury layered on a healing response.' },
-        { id: 'muscularis', label: 'Muscularis', x: 38, y: 62, finding: 'Muscularis propria is breached — this ulcer is deep, extending through the muscle wall.' },
-        { id: 'fibrosis', label: 'Ulcer base / fibrosis', x: 60, y: 80, finding: 'Dense fibrosis in the ulcer base — a hallmark of a chronic, repeatedly-injured lesion, not an acute erosion.' },
+        { id: 'mucosa', label: 'Mucosa margin', x: 24, y: 30, finding: 'Mucosa at the ulcer margin, with adjacent regenerating epithelium.' },
+        { id: 'submucosa', label: 'Submucosa', x: 62, y: 38, finding: 'Submucosa shows acute inflammatory exudate over granulation tissue — active injury layered on a healing response.' },
+        { id: 'muscularis', label: 'Muscularis', x: 35, y: 64, finding: 'Muscularis propria is breached — this ulcer is deep, extending through the muscle wall.' },
+        { id: 'fibrosis', label: 'Ulcer base / fibrosis', x: 62, y: 80, finding: 'Dense fibrosis in the ulcer base — a hallmark of a chronic, repeatedly-injured lesion, not an acute erosion.' },
       ],
     },
     diagnosis: {
@@ -141,10 +141,10 @@ export const CASES = [
     image: {
       placeholderLabel: 'Slide #882 — mediastinal lymph node biopsy, H&E',
       zones: [
-        { id: 'center', label: 'Central necrosis', x: 50, y: 42, finding: 'Central caseous necrosis — an amorphous, cheese-like (caseous) debris with no preserved cellular architecture. This central necrosis is what separates a caseating from a noncaseating granuloma.' },
-        { id: 'histiocytes', label: 'Epithelioid rim', x: 32, y: 60, finding: 'A rim of epithelioid histiocytes — macrophages with abundant pink (eosinophilic) cytoplasm, packed tightly around the necrotic center.' },
-        { id: 'giant-cells', label: 'Giant cells', x: 66, y: 58, finding: 'Multinucleated giant cells, formed by fusion of epithelioid histiocytes — a hallmark of granulomatous inflammation, driven by IFN-γ from TH1 cells.' },
-        { id: 'lymphocyte-rim', label: 'Lymphocyte cuff', x: 50, y: 80, finding: 'An outer rim of lymphocytes and a few plasma cells — the adaptive immune infiltrate that distinguishes this as chronic, not acute, inflammation. No sheets of neutrophils anywhere in this field.' },
+        { id: 'center', label: 'Central necrosis', x: 46, y: 52, finding: 'Central caseous necrosis — an amorphous, cheese-like (caseous) debris with no preserved cellular architecture. This central necrosis is what separates a caseating from a noncaseating granuloma.' },
+        { id: 'histiocytes', label: 'Epithelioid rim', x: 26, y: 48, finding: 'A rim of epithelioid histiocytes — macrophages with abundant pink (eosinophilic) cytoplasm, packed tightly around the necrotic center.' },
+        { id: 'giant-cells', label: 'Giant cells', x: 68, y: 36, finding: 'Multinucleated giant cells, formed by fusion of epithelioid histiocytes — a hallmark of granulomatous inflammation, driven by IFN-γ from TH1 cells.' },
+        { id: 'lymphocyte-rim', label: 'Lymphocyte cuff', x: 88, y: 34, finding: 'An outer rim of lymphocytes and a few plasma cells — the adaptive immune infiltrate that distinguishes this as chronic, not acute, inflammation. No sheets of neutrophils anywhere in this field.' },
       ],
     },
     diagnosis: {

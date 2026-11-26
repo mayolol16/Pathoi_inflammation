@@ -323,12 +323,7 @@ body.projector-mode .instructor-only {
 .rail .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .stage { display: none; }
-.stage.active { display: block; animation: rise 0.3s ease both; }
-
-@keyframes rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+.stage.active { display: block; }
 
 h2.stage-title {
   font-size: 22px;
@@ -529,6 +524,8 @@ textarea.reasoning {
 .slide-stage {
   display: flex;
   justify-content: center;
+  align-items: center;
+  min-height: 360px;
 }
 
 .slide-img-wrap {
@@ -641,7 +638,6 @@ textarea.reasoning {
   color: var(--vital-ink);
   padding: 13px 16px;
   font-size: 14.5px;
-  animation: rise 0.2s ease both;
 }
 
 /* ===== Reveal & Mediators ===== */
@@ -855,7 +851,7 @@ textarea.reasoning {
   background: var(--slide-frame);
   padding: 16px;
   border-radius: 3px;
-  min-height: 240px;
+  min-height: 340px;
   display: flex;
   flex-direction: column;
   align-items: center;

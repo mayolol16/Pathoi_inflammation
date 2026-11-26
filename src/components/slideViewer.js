@@ -19,7 +19,7 @@ export function renderOrientationVisual({
   const effectiveMode = hasPhoto ? (mediaMode || entry.defaultMode || 'photo') : 'model';
 
   const visualMarkup = effectiveMode === 'photo' && hasPhoto
-    ? `<img class="specimen-photo" loading="lazy" referrerpolicy="no-referrer" src="${escapeHtml(entry.photoUrl)}" alt="${escapeHtml(entry.title)}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+    ? `<img class="specimen-photo" decoding="sync" src="${escapeHtml(entry.photoUrl)}" alt="${escapeHtml(entry.title)}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
        <div style="display:none; width:100%;">${renderOrientationModelSVG(itemId, shown)}<p class="empty-note" style="color:#e0b25c; margin-top:8px;">External photo unavailable — showing representative model.</p></div>`
     : renderOrientationModelSVG(itemId, shown);
 
@@ -79,7 +79,7 @@ export function renderCaseSlideViewer({
     .join('');
 
   const mediaContent = effectiveMode === 'photo' && hasPhoto
-    ? `<img class="specimen-photo" loading="lazy" referrerpolicy="no-referrer" src="${escapeHtml(entry.photoUrl)}" alt="${escapeHtml(caseObj.image.placeholderLabel)}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+    ? `<img class="specimen-photo" decoding="sync" src="${escapeHtml(entry.photoUrl)}" alt="${escapeHtml(caseObj.image.placeholderLabel)}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
        <div style="display:none; width:100%;">${renderCaseModelSVG(caseObj.id)}</div>`
     : renderCaseModelSVG(caseObj.id);
 

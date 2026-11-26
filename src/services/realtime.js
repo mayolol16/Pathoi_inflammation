@@ -3,6 +3,7 @@ import { getOrCreateClientId } from './storage.js';
 
 const CHANNEL_NAME = 'imc530-pathology-live';
 const LOCAL_ROOM_PREFIX = 'imc530_room_';
+const LOCAL_PRES_PREFIX = 'imc530_pres_';
 
 export function generateRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -27,6 +28,10 @@ function defaultRoomData(code) {
       bypassWarmup: false,
       spotlightZoneId: null,
       spotlightReasoningId: null,
+      revealedZones: {},
+      mediatorsOpen: {},
+      caseMediaMode: {},
+      oriMediaMode: {},
       updatedAt: Date.now(),
     },
     polls: {},
@@ -52,6 +57,8 @@ export class RoomSession {
     this.channel = null;
     this.heartbeatTimer = null;
     this.roomData = null;
+    this._localPresence = {};
+    this._lastEmitSig = null;
     this._db = null;
     this._fbMod = null;
     this._fbConfigKey = null;
@@ -63,23 +70,43 @@ export class RoomSession {
     return () => this.listeners.delete(fn);
   }
 
-  emit() {
+  _computeSig(snap) {
+    const stateClean = { ...(snap.state || {}), updatedAt: 0 };
+    const studentSig = snap.students.map((s) => `${s.id}:${s.name}`).sort().join(',');
+    return JSON.stringify({
+      connected: snap.connected,
+      roomCode: snap.roomCode,
+      transport: snap.transport,
+      state: stateClean,
+      polls: snap.polls,
+      mediaOverrides: snap.mediaOverrides,
+      studentSig,
+    });
+  }
+
+  emit(force = false) {
     const snap = this.getSnapshot();
+    const sig = this._computeSig(snap);
+    if (!force && sig === this._lastEmitSig) return;
+    this._lastEmitSig = sig;
     this.listeners.forEach((fn) => fn(snap));
   }
 
   getSnapshot() {
-    const rawPresence = this.roomData?.presence || {};
+    const rawPresence = this.transport === 'local'
+      ? this._localPresence
+      : (this.roomData?.presence || {});
     const now = Date.now();
     const activeStudents = Object.entries(rawPresence)
       .filter(([, p]) => p && p.role === 'student' && (this.transport === 'firebase' || now - (p.lastSeen || 0) < 45000))
       .map(([id, p]) => ({ id, ...p }));
 
+    const baseState = defaultRoomData(this.roomCode || '').state;
     return {
       connected: Boolean(this.roomCode),
       roomCode: this.roomCode,
       transport: this.transport,
-      state: this.roomData?.state || defaultRoomData('').state,
+      state: { ...baseState, ...(this.roomData?.state || {}) },
       polls: this.roomData?.polls || {},
       mediaOverrides: this.roomData?.mediaOverrides || {},
       studentCount: activeStudents.length,
@@ -150,6 +177,7 @@ export class RoomSession {
     this.role = role;
     this.displayName = displayName || (role === 'instructor' ? 'Instructor' : 'Student');
     this.clientId = getOrCreateClientId(role === 'instructor' ? 'inst' : 'stu');
+    this._lastEmitSig = null;
 
     const fbReady = await this._initFirebase();
     if (fbReady) {
@@ -170,6 +198,10 @@ export class RoomSession {
       if (!snap.exists()) {
         await set(stateRef, defaultRoomData(code).state);
       }
+    } else {
+      // Hydrate initial room snapshot immediately on join so mid-session students land synced
+      const snap = await get(roomRef);
+      this.roomData = snap.val() || defaultRoomData(code);
     }
 
     const presRef = ref(this._db, `rooms/${code}/presence/${this.clientId}`);
@@ -207,6 +239,24 @@ export class RoomSession {
     this.emit();
   }
 
+  _readLocalPresence(code) {
+    try {
+      const raw = localStorage.getItem(LOCAL_PRES_PREFIX + code);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  _writeLocalPresence(code, pres, broadcast = true) {
+    localStorage.setItem(LOCAL_PRES_PREFIX + code, JSON.stringify(pres));
+    this._localPresence = pres;
+    if (broadcast && this.channel) {
+      this.channel.postMessage({ type: 'presence_update', code, pres });
+    }
+    this.emit();
+  }
+
   _connectLocal(code, createIfMissing) {
     this.transport = 'local';
     let existing = this._readLocalRoom(code);
@@ -217,25 +267,48 @@ export class RoomSession {
       }
     }
     this.roomData = existing;
+    this._localPresence = this._readLocalPresence(code);
 
-    const writePresence = () => {
-      const cur = this._readLocalRoom(code) || defaultRoomData(code);
-      cur.presence = cur.presence || {};
-      cur.presence[this.clientId] = {
+    const activeSig = (pres) => {
+      const now = Date.now();
+      return Object.entries(pres)
+        .filter(([, p]) => p && p.role === 'student' && now - (p.lastSeen || 0) < 45000)
+        .map(([id, p]) => `${id}:${p.name}`)
+        .sort()
+        .join(',');
+    };
+
+    const writePresence = (isHeartbeat = false) => {
+      const curPres = this._readLocalPresence(code);
+      const prevSig = activeSig(curPres);
+      curPres[this.clientId] = {
         role: this.role,
         name: this.displayName,
         lastSeen: Date.now(),
       };
-      this._writeLocalRoom(cur);
+      const nextSig = activeSig(curPres);
+      // Heartbeats update lastSeen silently in localStorage unless student roster changed
+      const changed = !isHeartbeat || prevSig !== nextSig;
+      if (changed) {
+        this._writeLocalPresence(code, curPres, true);
+      } else {
+        localStorage.setItem(LOCAL_PRES_PREFIX + code, JSON.stringify(curPres));
+        this._localPresence = curPres;
+      }
     };
-    writePresence();
-    this.heartbeatTimer = setInterval(writePresence, 12000);
+
+    writePresence(false);
+    this.heartbeatTimer = setInterval(() => writePresence(true), 12000);
 
     if (typeof BroadcastChannel !== 'undefined') {
       this.channel = new BroadcastChannel(CHANNEL_NAME);
       this.channel.onmessage = (ev) => {
-        if (ev.data?.type === 'room_update' && ev.data?.code === this.roomCode) {
+        if (ev.data?.code !== this.roomCode) return;
+        if (ev.data?.type === 'room_update') {
           this.roomData = ev.data.data;
+          this.emit();
+        } else if (ev.data?.type === 'presence_update') {
+          this._localPresence = ev.data.pres || {};
           this.emit();
         }
       };
@@ -249,30 +322,47 @@ export class RoomSession {
         } catch {
           // ignore
         }
+      } else if (ev.key === LOCAL_PRES_PREFIX + this.roomCode && ev.newValue) {
+        try {
+          this._localPresence = JSON.parse(ev.newValue);
+          this.emit();
+        } catch {
+          // ignore
+        }
       }
     };
     window.addEventListener('storage', onStorage);
     this.unsubscribers.push(() => window.removeEventListener('storage', onStorage));
 
     const onBeforeUnload = () => {
-      const cur = this._readLocalRoom(code);
-      if (cur?.presence?.[this.clientId]) {
-        delete cur.presence[this.clientId];
-        localStorage.setItem(LOCAL_ROOM_PREFIX + code, JSON.stringify(cur));
+      const curPres = this._readLocalPresence(code);
+      if (curPres?.[this.clientId]) {
+        delete curPres[this.clientId];
+        localStorage.setItem(LOCAL_PRES_PREFIX + code, JSON.stringify(curPres));
         if (this.channel) {
-          this.channel.postMessage({ type: 'room_update', code, data: cur });
+          this.channel.postMessage({ type: 'presence_update', code, pres: curPres });
         }
       }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     this.unsubscribers.push(() => window.removeEventListener('beforeunload', onBeforeUnload));
-    this.emit();
+    this.emit(true);
   }
 
   disconnect() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.transport === 'local' && this.roomCode && this.clientId) {
+      const curPres = this._readLocalPresence(this.roomCode);
+      if (curPres?.[this.clientId]) {
+        delete curPres[this.clientId];
+        localStorage.setItem(LOCAL_PRES_PREFIX + this.roomCode, JSON.stringify(curPres));
+        if (this.channel) {
+          this.channel.postMessage({ type: 'presence_update', code: this.roomCode, pres: curPres });
+        }
+      }
     }
     if (this.channel) {
       this.channel.close();
@@ -284,7 +374,9 @@ export class RoomSession {
     this.unsubscribers = [];
     this.roomCode = null;
     this.roomData = null;
-    this.emit();
+    this._localPresence = {};
+    this._lastEmitSig = null;
+    this.emit(true);
   }
 
   async updateRoomState(patch) {
