@@ -2,11 +2,12 @@ import { CASES } from '../data/cases.js';
 import { ORIENTATION } from '../data/orientation.js';
 import { resolveCaseZones } from '../data/mediaCatalog.js';
 import { ELABORATE_GUIDES, generateTalkingPoints, VIGNETTE_EXPLAINERS } from '../data/tutorContent.js';
-import { renderCaseSlideViewer, renderOrientationVisual } from '../components/slideViewer.js';
+import { attachInteractiveViewer, renderCaseSlideViewer, renderOrientationVisual } from '../components/slideViewer.js';
 import { openTutorDrawer } from '../components/tutorDrawer.js';
 import { openQRModal } from '../components/qrModal.js';
 import { openSettingsModal } from '../components/settingsModal.js';
 import { createVerifierController } from './verifierView.js';
+import { createAnalyticsController } from './analyticsView.js';
 import { getInstructorPasscode, isDefaultPasscode } from '../config/firebaseConfig.js';
 import { generateRoomCode, roomSession } from '../services/realtime.js';
 import { isInstructorAuthed, loadMediaOverrides, setInstructorAuthed } from '../services/storage.js';
@@ -18,16 +19,21 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
   let authed = isInstructorAuthed();
   let authError = '';
   let connError = '';
-  let activeTab = initialTab; // 'classroom' | 'verify'
+  let activeTab = initialTab; // 'classroom' | 'analytics' | 'verify'
   let projectorMode = false;
   let reasoningFilter = 'all';
   let revealedZones = {}; // caseId -> Set
+  let oriFeaturesRevealed = {}; // `${id}:${shown}` -> Set
+  let activeOriCallout = {}; // `${id}:${shown}` -> { idx, feat }
   let mediatorsOpen = {}; // caseId -> bool
   let caseMediaMode = {}; // caseId -> 'photo' | 'model'
   let oriMediaMode = {}; // `${id}:${shown}` -> 'photo' | 'model'
   let activeZoneCallout = {}; // caseId -> { idx, zone }
+  let slideTool = 'none'; // 'none' | 'point' | 'label'
+  let labelDraft = '';
 
   const verifier = createVerifierController(onRerender);
+  const analyticsCtrl = createAnalyticsController(onRerender);
   let snap = roomSession.getSnapshot();
 
   const unsub = roomSession.subscribe((nextSnap) => {
@@ -69,7 +75,7 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       <div class="vignette" style="max-width:480px; margin:36px auto;">
         <p class="stage-kicker">Faculty Access</p>
         <h2 class="stage-title" style="margin-bottom:8px;">Instructor Console</h2>
-        <p class="hint" style="margin-top:0;">Enter the instructor passcode to open live classroom polling, pacing controls, and image verification.</p>
+        <p class="hint" style="margin-top:0;">Enter the instructor passcode to open live classroom polling, pacing controls, student analytics, and image verification.</p>
         ${isDefaultPasscode() ? `<p style="font-size:13px; color:var(--vital-ink); background:var(--vital-soft); padding:8px 12px; border:1px solid var(--vital);">Default passcode: <code>IMC530</code> (you can change this in Sync &amp; Settings once inside).</p>` : ''}
         <form id="inst-auth-form" style="display:flex; gap:8px; margin-top:14px;">
           <input type="password" id="inst-pass-input" class="text-input" placeholder="Passcode" style="flex:1;" autofocus />
@@ -110,6 +116,7 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       <div class="media-header-row instructor-only" style="margin-top:14px;">
         <div class="segmented-toggle">
           <button type="button" class="${activeTab === 'classroom' ? 'active' : ''}" id="inst-tab-classroom">Live Classroom</button>
+          <button type="button" class="${activeTab === 'analytics' ? 'active' : ''}" id="inst-tab-analytics">Student Analytics</button>
           <button type="button" class="${activeTab === 'verify' ? 'active' : ''}" id="inst-tab-verify">Verify Images &amp; Pins</button>
         </div>
         ${
@@ -124,6 +131,32 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
                   Allow skipping warm-up
                 </label>
               </div>`
+            : ''
+        }
+      </div>`;
+  }
+
+  function renderSlideToolsBar(targetKey) {
+    const rs = snap.state;
+    const labelCount = (rs.annotations?.[targetKey] || []).length;
+    const hasPointer = Boolean(rs.livePointer && rs.livePointer.targetKey === targetKey);
+    return `
+      <div class="inst-tools-bar instructor-only">
+        <span style="font-family:var(--mono); font-size:11px; text-transform:uppercase; color:var(--accent);">Slide Tools:</span>
+        <button type="button" class="btn sm ${slideTool === 'point' ? 'chosen' : ''}" data-slide-tool="point">🎯 Point Live</button>
+        <button type="button" class="btn sm ${slideTool === 'label' ? 'chosen' : ''}" data-slide-tool="label">🏷️ Add Label</button>
+        ${
+          slideTool === 'label'
+            ? `<input type="text" id="inst-label-input" class="text-input serif" placeholder="Label text (then click slide)…" value="${escapeHtml(labelDraft)}" style="min-width:210px; padding:5px 9px; font-size:13px;" />`
+            : ''
+        }
+        ${hasPointer ? `<button type="button" class="btn sm" id="inst-clear-pointer">Clear Pointer</button>` : ''}
+        ${labelCount ? `<button type="button" class="btn sm" data-clear-labels="${escapeHtml(targetKey)}">Clear Labels (${labelCount})</button>` : ''}
+        ${
+          slideTool !== 'none'
+            ? `<span style="font-size:12.5px; color:var(--ink-soft);">
+                ${slideTool === 'point' ? 'Click anywhere on the image to move the live pointer.' : 'Type a label and click anywhere on the image to pin it.'}
+              </span>`
             : ''
         }
       </div>`;
@@ -151,18 +184,29 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     const shown = rs.orientPair || 'normal';
     const pane = shown === 'normal' ? item.normal : item.abnormal;
     const mediaKey = `${item.id}:${shown}`;
+    const revFeatures = oriFeaturesRevealed[mediaKey] || new Set();
+    const oriCallout = activeOriCallout[mediaKey] || null;
+    const annotations = rs.annotations?.[mediaKey] || [];
+
     const vis = renderOrientationVisual({
       itemId: item.id,
       shown,
       mediaMode: rs.oriMediaMode?.[mediaKey] || oriMediaMode[mediaKey] || null,
       roomOverrides: snap.mediaOverrides,
       onToggleModeAttr: `data-inst-ori-media="${escapeHtml(mediaKey)}"`,
+      features: pane.features || [],
+      revealedFeatures: revFeatures,
+      annotations,
+      livePointer: rs.livePointer,
+      isInstructor: true,
+      toolActive: slideTool !== 'none',
     });
 
     return `
       <div class="stage active">
         <p class="stage-kicker">Warm-up · ${rs.orientIdx + 1} of ${ORIENTATION.length}</p>
         <h2 class="stage-title">${escapeHtml(item.resolution)} · ${escapeHtml(item.organ)}</h2>
+        ${renderSlideToolsBar(mediaKey)}
         <div class="orient-card">
           <h3>${escapeHtml(item.why)}</h3>
           <div class="pair-toggle">
@@ -178,6 +222,11 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
               ${vis.attrLine}
             </div>
           </div>
+          ${
+            oriCallout
+              ? `<div class="zone-callout"><b>Feature ${oriCallout.idx + 1} — ${escapeHtml(oriCallout.feat.label)}.</b> ${escapeHtml(oriCallout.feat.finding)}</div>`
+              : ''
+          }
           <ul class="observe-points">
             ${pane.points.map((p) => `<li><span class="${p.ok ? 'ok' : 'bad'}">${p.ok ? '✓' : '×'}</span><span>${escapeHtml(p.text)}</span></li>`).join('')}
           </ul>
@@ -349,22 +398,27 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     if (rs.stage === 2) {
       const syncedRevealed = rs.revealedZones?.[c.id] || [];
       const revealed = new Set([...(revealedZones[c.id] || []), ...syncedRevealed]);
-      const zones = resolveCaseZones(c, snap.mediaOverrides);
       const medOpen = Boolean(rs.mediatorsOpen?.[c.id] ?? mediatorsOpen[c.id]);
       const callout = activeZoneCallout[c.id];
+      const annotations = rs.annotations?.[c.id] || [];
 
       return `
         ${rail}
         <div class="stage active">
           <p class="stage-kicker">Explain — Slide Reveal</p>
           <h2 class="stage-title">${escapeHtml(c.image.placeholderLabel)}</h2>
-          <p class="hint">Clicking any zone reveals the finding and broadcasts a spotlight ring to connected student screens.</p>
+          <p class="hint">Zoom &amp; pan to inspect structures, click pins to reveal &amp; spotlight zones, or use Slide Tools to point and label features live.</p>
+          ${renderSlideToolsBar(c.id)}
           ${renderCaseSlideViewer({
             caseObj: c,
             revealedZones: revealed,
             mediaMode: rs.caseMediaMode?.[c.id] || caseMediaMode[c.id] || null,
             spotlightZoneId: rs.spotlightZoneId,
             roomOverrides: snap.mediaOverrides,
+            annotations,
+            livePointer: rs.livePointer,
+            isInstructor: true,
+            toolActive: slideTool !== 'none',
           })}
           ${
             callout
@@ -435,15 +489,79 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
   function render() {
     if (!authed) return renderAuthGate();
     const rs = snap.state;
+    let body = '';
+    if (activeTab === 'verify') {
+      body = verifier.render();
+    } else if (activeTab === 'analytics') {
+      body = analyticsCtrl.render();
+    } else {
+      body = `${renderClassroomNav()}${rs.view === 'orient' ? renderOrientationClassroom() : renderCaseClassroom()}`;
+    }
+
     return `
       ${connError ? `<div class="banner-notice">${escapeHtml(connError)}</div>` : ''}
       ${renderTopBar()}
-      ${
-        activeTab === 'verify'
-          ? verifier.render()
-          : `${renderClassroomNav()}${rs.view === 'orient' ? renderOrientationClassroom() : renderCaseClassroom()}`
-      }
+      ${body}
     `;
+  }
+
+  function wireSlideTools(container, targetKey) {
+    container.querySelectorAll('[data-slide-tool]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.slideTool;
+        slideTool = slideTool === next ? 'none' : next;
+        onRerender();
+      });
+    });
+
+    const labelInput = container.querySelector('#inst-label-input');
+    labelInput?.addEventListener('input', (e) => {
+      labelDraft = e.target.value;
+    });
+
+    container.querySelector('#inst-clear-pointer')?.addEventListener('click', () => {
+      roomSession.updateRoomState({ livePointer: null });
+    });
+
+    container.querySelectorAll('[data-clear-labels]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.clearLabels;
+        const nextAnn = { ...(snap.state.annotations || {}), [key]: [] };
+        roomSession.updateRoomState({ annotations: nextAnn });
+      });
+    });
+
+    container.querySelectorAll('[data-del-label-id]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const delId = btn.dataset.delLabelId;
+        const key = btn.dataset.delTarget;
+        const list = (snap.state.annotations?.[key] || []).filter((a) => a.id !== delId);
+        const nextAnn = { ...(snap.state.annotations || {}), [key]: list };
+        roomSession.updateRoomState({ annotations: nextAnn });
+      });
+    });
+
+    attachInteractiveViewer(container, targetKey, {
+      onImageClick: (x, y) => {
+        if (slideTool === 'point') {
+          roomSession.updateRoomState({
+            livePointer: { targetKey, x, y, ts: Date.now() },
+          });
+        } else if (slideTool === 'label') {
+          const txt = (labelDraft || container.querySelector('#inst-label-input')?.value || '').trim();
+          if (!txt) {
+            container.querySelector('#inst-label-input')?.focus();
+            return;
+          }
+          const existing = snap.state.annotations?.[targetKey] || [];
+          const nextItem = { id: `lbl_${Date.now().toString(36)}`, x, y, text: txt };
+          const nextAnn = { ...(snap.state.annotations || {}), [targetKey]: [...existing, nextItem] };
+          labelDraft = '';
+          roomSession.updateRoomState({ annotations: nextAnn });
+        }
+      },
+    });
   }
 
   function bindEvents(container) {
@@ -496,6 +614,10 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       activeTab = 'classroom';
       onRerender();
     });
+    container.querySelector('#inst-tab-analytics')?.addEventListener('click', () => {
+      activeTab = 'analytics';
+      analyticsCtrl.refreshData();
+    });
     container.querySelector('#inst-tab-verify')?.addEventListener('click', () => {
       activeTab = 'verify';
       onRerender();
@@ -503,6 +625,10 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
 
     if (activeTab === 'verify') {
       verifier.bindEvents(container);
+      return;
+    }
+    if (activeTab === 'analytics') {
+      analyticsCtrl.bindEvents(container);
       return;
     }
 
@@ -515,10 +641,12 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     });
 
     container.querySelector('[data-inst-nav="orient"]')?.addEventListener('click', () => {
+      slideTool = 'none';
       roomSession.updateRoomState({ view: 'orient', spotlightZoneId: null, spotlightReasoningId: null });
     });
     container.querySelectorAll('[data-inst-case]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        slideTool = 'none';
         roomSession.updateRoomState({
           view: 'case',
           caseIdx: Number(btn.dataset.instCase),
@@ -531,6 +659,7 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
     });
     container.querySelectorAll('[data-inst-stage]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        slideTool = 'none';
         roomSession.updateRoomState({
           stage: Number(btn.dataset.instStage),
           spotlightZoneId: null,
@@ -538,10 +667,32 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       });
     });
 
-    // Orientation controls
+    // Orientation controls + Slide tools
+    if (snap.state.view === 'orient') {
+      const item = ORIENTATION[snap.state.orientIdx || 0] || ORIENTATION[0];
+      const shown = snap.state.orientPair || 'normal';
+      const pane = shown === 'normal' ? item.normal : item.abnormal;
+      const mediaKey = `${item.id}:${shown}`;
+
+      wireSlideTools(container, mediaKey);
+
+      container.querySelectorAll(`#ori-wrap-${item.id} .zone-pin`).forEach((pin) => {
+        pin.addEventListener('click', () => {
+          const featId = pin.dataset.zoneId;
+          const idx = Number(pin.dataset.zoneIdx);
+          const feat = (pane.features || []).find((f) => f.id === featId);
+          if (!feat) return;
+          if (!oriFeaturesRevealed[mediaKey]) oriFeaturesRevealed[mediaKey] = new Set();
+          oriFeaturesRevealed[mediaKey].add(featId);
+          activeOriCallout[mediaKey] = { idx, feat };
+          onRerender();
+        });
+      });
+    }
+
     container.querySelectorAll('[data-inst-ori-pair]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        roomSession.updateRoomState({ orientPair: btn.dataset.instOriPair });
+        roomSession.updateRoomState({ orientPair: btn.dataset.instOriPair, livePointer: null });
       });
     });
     container.querySelectorAll('[data-inst-ori-media] button').forEach((btn) => {
@@ -553,12 +704,13 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       });
     });
     container.querySelector('#inst-ori-prev')?.addEventListener('click', () => {
-      roomSession.updateRoomState({ orientIdx: Math.max(0, (snap.state.orientIdx || 0) - 1), orientPair: 'normal' });
+      roomSession.updateRoomState({ orientIdx: Math.max(0, (snap.state.orientIdx || 0) - 1), orientPair: 'normal', livePointer: null });
     });
     container.querySelector('#inst-ori-next')?.addEventListener('click', () => {
       roomSession.updateRoomState({
         orientIdx: Math.min(ORIENTATION.length - 1, (snap.state.orientIdx || 0) + 1),
         orientPair: 'normal',
+        livePointer: null,
       });
     });
 
@@ -625,7 +777,10 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
       roomSession.updateRoomState({ spotlightReasoningId: null });
     });
 
-    // Stage 2 Slide Reveal
+    // Stage 2 Slide Reveal + Slide Tools
+    if (snap.state.view === 'case' && snap.state.stage === 2) {
+      wireSlideTools(container, c.id);
+    }
     container.querySelectorAll(`[data-case-media-toggle="${c.id}"] button`).forEach((btn) => {
       btn.addEventListener('click', () => {
         caseMediaMode[c.id] = btn.dataset.mediaMode;
@@ -691,7 +846,10 @@ export function createInstructorController(onRerender, initialTab = 'classroom')
   return {
     render,
     bindEvents,
-    setTab: (t) => { activeTab = t; },
+    setTab: (t) => {
+      activeTab = t;
+      if (t === 'analytics' && authed) analyticsCtrl.refreshData();
+    },
     destroy: () => {
       document.body.classList.remove('projector-mode');
       unsub();

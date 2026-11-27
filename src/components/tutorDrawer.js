@@ -168,11 +168,15 @@ function renderDrawer() {
   });
   root.querySelector('#drawer-reveal-btn')?.addEventListener('click', () => {
     revealAnswerOpen = !revealAnswerOpen;
+    if (revealAnswerOpen && typeof p.onRevealAnswer === 'function') {
+      p.onRevealAnswer();
+    }
     renderDrawer();
   });
   root.querySelector('#drawer-ai-send')?.addEventListener('click', async () => {
     const q = root.querySelector('#drawer-ai-input')?.value?.trim();
     if (!q) return;
+    if (typeof p.onAskAI === 'function') p.onAskAI(q);
     aiAnswerState = { loading: true, text: '', error: '' };
     renderDrawer();
     try {

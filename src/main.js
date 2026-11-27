@@ -17,6 +17,7 @@ function parseHash() {
   const raw = window.location.hash || '#/';
   const path = raw.replace(/^#/, '');
   if (path.startsWith('/instructor')) return { route: 'instructor', tab: 'classroom' };
+  if (path.startsWith('/analytics')) return { route: 'instructor', tab: 'analytics' };
   if (path.startsWith('/verify')) return { route: 'instructor', tab: 'verify' };
   const joinMatch = path.match(/^\/join\/([A-Za-z0-9]+)/i);
   if (joinMatch) return { route: 'student', joinCode: joinMatch[1].toUpperCase() };
@@ -56,6 +57,7 @@ function mountShell() {
         <span>
           <a href="#/">Student View</a> ·
           <a href="#/instructor">Instructor Console</a> ·
+          <a href="#/analytics">Student Analytics</a> ·
           <a href="#/verify">Verify Images &amp; Pins</a>
         </span>
       </footer>

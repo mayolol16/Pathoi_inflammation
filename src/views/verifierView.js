@@ -108,6 +108,7 @@ export function createVerifierController(onRerender) {
                       showModeToggle: false,
                       wrapIdSuffix: '-photo',
                       calibratingZoneId: calZoneId,
+                      enableZoom: false,
                     })}
                   </div>
                   <div>
@@ -120,6 +121,7 @@ export function createVerifierController(onRerender) {
                       showVerifyBadge: false,
                       showModeToggle: false,
                       wrapIdSuffix: '-model',
+                      enableZoom: false,
                     })}
                   </div>
                 </div>

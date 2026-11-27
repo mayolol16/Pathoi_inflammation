@@ -1,9 +1,11 @@
 import { getFirebaseConfig } from '../config/firebaseConfig.js';
 import { getOrCreateClientId } from './storage.js';
+import { getDeviceInfo } from '../utils/deviceInfo.js';
 
 const CHANNEL_NAME = 'imc530-pathology-live';
 const LOCAL_ROOM_PREFIX = 'imc530_room_';
 const LOCAL_PRES_PREFIX = 'imc530_pres_';
+const LOCAL_ANALYTICS_PREFIX = 'imc530_analytics_';
 
 export function generateRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -32,6 +34,8 @@ function defaultRoomData(code) {
       mediatorsOpen: {},
       caseMediaMode: {},
       oriMediaMode: {},
+      annotations: {},
+      livePointer: null,
       updatedAt: Date.now(),
     },
     polls: {},
@@ -58,6 +62,7 @@ export class RoomSession {
     this.heartbeatTimer = null;
     this.roomData = null;
     this._localPresence = {};
+    this._localAnalytics = {};
     this._lastEmitSig = null;
     this._db = null;
     this._fbMod = null;
@@ -73,12 +78,14 @@ export class RoomSession {
   _computeSig(snap) {
     const stateClean = { ...(snap.state || {}), updatedAt: 0 };
     const studentSig = snap.students.map((s) => `${s.id}:${s.name}`).sort().join(',');
+    const pollsWithoutAnalytics = { ...(snap.polls || {}) };
+    delete pollsWithoutAnalytics._analytics;
     return JSON.stringify({
       connected: snap.connected,
       roomCode: snap.roomCode,
       transport: snap.transport,
       state: stateClean,
-      polls: snap.polls,
+      polls: pollsWithoutAnalytics,
       mediaOverrides: snap.mediaOverrides,
       studentSig,
     });
@@ -111,7 +118,16 @@ export class RoomSession {
       mediaOverrides: this.roomData?.mediaOverrides || {},
       studentCount: activeStudents.length,
       students: activeStudents,
+      analytics: this.getRoomAnalytics(),
     };
+  }
+
+  getRoomAnalytics() {
+    if (!this.roomCode) return {};
+    if (this.transport === 'firebase') {
+      return this.roomData?.polls?._analytics || {};
+    }
+    return this._localAnalytics || {};
   }
 
   getVoteSummary(caseId, hypotheses = []) {
@@ -208,6 +224,7 @@ export class RoomSession {
     await set(presRef, {
       role: this.role,
       name: this.displayName,
+      device: getDeviceInfo().label,
       lastSeen: Date.now(),
     });
     onDisconnect(presRef).remove();
@@ -268,6 +285,7 @@ export class RoomSession {
     }
     this.roomData = existing;
     this._localPresence = this._readLocalPresence(code);
+    this._localAnalytics = this._readLocalAnalytics(code);
 
     const activeSig = (pres) => {
       const now = Date.now();
@@ -284,6 +302,7 @@ export class RoomSession {
       curPres[this.clientId] = {
         role: this.role,
         name: this.displayName,
+        device: getDeviceInfo().label,
         lastSeen: Date.now(),
       };
       const nextSig = activeSig(curPres);
@@ -310,6 +329,8 @@ export class RoomSession {
         } else if (ev.data?.type === 'presence_update') {
           this._localPresence = ev.data.pres || {};
           this.emit();
+        } else if (ev.data?.type === 'analytics_update') {
+          this._localAnalytics = ev.data.analytics || {};
         }
       };
     }
@@ -326,6 +347,12 @@ export class RoomSession {
         try {
           this._localPresence = JSON.parse(ev.newValue);
           this.emit();
+        } catch {
+          // ignore
+        }
+      } else if (ev.key === LOCAL_ANALYTICS_PREFIX + this.roomCode && ev.newValue) {
+        try {
+          this._localAnalytics = JSON.parse(ev.newValue);
         } catch {
           // ignore
         }
@@ -375,8 +402,69 @@ export class RoomSession {
     this.roomCode = null;
     this.roomData = null;
     this._localPresence = {};
+    this._localAnalytics = {};
     this._lastEmitSig = null;
     this.emit(true);
+  }
+
+  _readLocalAnalytics(code) {
+    try {
+      const raw = localStorage.getItem(LOCAL_ANALYTICS_PREFIX + code);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  async writeAnalyticsRecord(roomCode, learnerId, record) {
+    const targetCode = String(roomCode || 'SELF_PACED').trim().toUpperCase();
+    if (!targetCode || !learnerId) return;
+
+    const fbReady = await this._initFirebase();
+    if (fbReady && this._fbMod) {
+      const { ref, set } = this._fbMod;
+      await set(ref(this._db, `rooms/${targetCode}/polls/_analytics/${learnerId}`), record);
+      return;
+    }
+
+    const cur = this._readLocalAnalytics(targetCode);
+    cur[learnerId] = record;
+    localStorage.setItem(LOCAL_ANALYTICS_PREFIX + targetCode, JSON.stringify(cur));
+    if (this.roomCode === targetCode) {
+      this._localAnalytics = cur;
+    }
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = this.channel || new BroadcastChannel(CHANNEL_NAME);
+      ch.postMessage({ type: 'analytics_update', code: targetCode, analytics: cur });
+      if (!this.channel) ch.close();
+    }
+  }
+
+  async fetchRoomAnalytics(roomCode) {
+    const targetCode = String(roomCode || 'SELF_PACED').trim().toUpperCase();
+    if (!targetCode) return {};
+    const fbReady = await this._initFirebase();
+    if (fbReady && this._fbMod) {
+      const { ref, get } = this._fbMod;
+      const snap = await get(ref(this._db, `rooms/${targetCode}/polls/_analytics`));
+      return snap.exists() ? snap.val() : {};
+    }
+    return this._readLocalAnalytics(targetCode);
+  }
+
+  async clearRoomAnalytics(roomCode) {
+    const targetCode = String(roomCode || 'SELF_PACED').trim().toUpperCase();
+    if (!targetCode) return;
+    const fbReady = await this._initFirebase();
+    if (fbReady && this._fbMod) {
+      const { ref, remove } = this._fbMod;
+      await remove(ref(this._db, `rooms/${targetCode}/polls/_analytics`));
+      return;
+    }
+    localStorage.removeItem(LOCAL_ANALYTICS_PREFIX + targetCode);
+    if (this.roomCode === targetCode) {
+      this._localAnalytics = {};
+    }
   }
 
   async updateRoomState(patch) {

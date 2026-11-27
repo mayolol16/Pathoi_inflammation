@@ -2,6 +2,7 @@ const STUDENT_STATE_KEY = 'imc530_student_state_v1';
 const MEDIA_OVERRIDES_KEY = 'imc530_media_overrides_v1';
 const THEME_KEY = 'imc530_theme';
 const INSTRUCTOR_AUTH_KEY = 'imc530_instructor_authed';
+const LEARNER_ID_KEY = 'imc530_learner_id';
 
 function randomId(prefix = 'stu') {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -10,6 +11,19 @@ function randomId(prefix = 'stu') {
     out += chars[Math.floor(Math.random() * chars.length)];
   }
   return `${prefix}_${out}`;
+}
+
+export function getOrCreateLearnerId() {
+  try {
+    let id = localStorage.getItem(LEARNER_ID_KEY);
+    if (!id) {
+      id = randomId('lrn');
+      localStorage.setItem(LEARNER_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return randomId('lrn');
+  }
 }
 
 export function getOrCreateClientId(prefix = 'stu') {

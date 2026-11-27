@@ -2,9 +2,25 @@ import { CASES } from '../data/cases.js';
 import { ORIENTATION } from '../data/orientation.js';
 import { resolveCaseZones } from '../data/mediaCatalog.js';
 import { DIFFERENTIAL_EXPLAINERS, ELABORATE_GUIDES, VIGNETTE_EXPLAINERS } from '../data/tutorContent.js';
-import { renderCaseSlideViewer, renderOrientationVisual } from '../components/slideViewer.js';
+import { attachInteractiveViewer, renderCaseSlideViewer, renderOrientationVisual } from '../components/slideViewer.js';
 import { openTutorDrawer } from '../components/tutorDrawer.js';
 import { roomSession } from '../services/realtime.js';
+import {
+  initStudentAnalytics,
+  setAnalyticsContext,
+  studentAnalytics,
+  trackAIQuestion,
+  trackElaborateOpened,
+  trackElaborateRevealed,
+  trackHypothesisCommit,
+  trackMediaToggle,
+  trackMediatorsOpened,
+  trackOrientComplete,
+  trackOrientFlip,
+  trackVignetteExplainer,
+  trackWhatsThis,
+  trackZoneExamined,
+} from '../services/analytics.js';
 import { loadStudentProgress, saveStudentProgress } from '../services/storage.js';
 import { escapeHtml } from '../utils/html.js';
 
@@ -14,6 +30,7 @@ export function createStudentController(onRerender) {
   const local = {
     mode: 'self', // 'self' | 'live'
     studentName: saved.studentName || '',
+    editingName: !saved.studentName,
     joinCodeInput: saved.lastRoomCode || '',
     joinError: '',
     joining: false,
@@ -22,6 +39,8 @@ export function createStudentController(onRerender) {
     orientDone: new Set(saved.orientDone || []),
     orientPairShown: {},
     orientMediaMode: {}, // key: `${id}:${shown}` -> 'photo' | 'model'
+    orientFeaturesRevealed: {}, // key: `${id}:${shown}` -> Set
+    activeOriCallout: {}, // key: `${id}:${shown}` -> { idx, feat }
     caseIdx: saved.caseIdx || 0,
     stage: saved.stage || 0,
     picks: saved.picks || {},
@@ -37,6 +56,12 @@ export function createStudentController(onRerender) {
   let snap = roomSession.getSnapshot();
   let lastSyncedKey = '';
   let lastInstructorSpotlightId = null;
+
+  initStudentAnalytics({
+    mode: 'self-paced',
+    roomCode: 'SELF_PACED',
+    name: local.studentName,
+  });
 
   function hydrateFromRoomState(rs) {
     if (!rs) return;
@@ -79,11 +104,12 @@ export function createStudentController(onRerender) {
     if (local.mode === 'live' && snap.connected) {
       const rs = snap.state;
       hydrateFromRoomState(rs);
-      const syncKey = `${rs.view}|${rs.orientIdx}|${rs.orientPair}|${rs.caseIdx}|${rs.stage}|${rs.pollStatus}|${rs.pacingMode}|${rs.bypassWarmup}|${rs.spotlightZoneId}|${rs.spotlightReasoningId}|${JSON.stringify(rs.revealedZones || {})}|${JSON.stringify(rs.mediatorsOpen || {})}`;
+      const syncKey = `${rs.view}|${rs.orientIdx}|${rs.orientPair}|${rs.caseIdx}|${rs.stage}|${rs.pollStatus}|${rs.pacingMode}|${rs.bypassWarmup}|${rs.spotlightZoneId}|${rs.spotlightReasoningId}|${JSON.stringify(rs.revealedZones || {})}|${JSON.stringify(rs.mediatorsOpen || {})}|${JSON.stringify(rs.annotations || {})}|${JSON.stringify(rs.livePointer || null)}`;
       const activeId = document.activeElement?.id || '';
       const typing =
         activeId.startsWith('student-reasoning-') ||
         activeId === 'stu-name-input' ||
+        activeId === 'stu-inline-name' ||
         activeId === 'stu-code-input';
       if (typing && syncKey === lastSyncedKey) {
         return; // Don't interrupt student typing when only vote counts tick
@@ -120,12 +146,18 @@ export function createStudentController(onRerender) {
       local.joinCodeInput = clean;
       if (name !== undefined) {
         local.studentName = String(name || '').trim();
+        if (local.studentName) local.editingName = false;
       }
       persistLocal();
       const connectedSnap = await roomSession.connect(clean, 'student', local.studentName || 'Student', false);
       local.joining = false;
       snap = connectedSnap;
       hydrateFromRoomState(snap.state);
+      setAnalyticsContext({
+        mode: 'live',
+        roomCode: snap.roomCode,
+        name: local.studentName,
+      });
       lastSyncedKey = '';
       onRerender();
     } catch (err) {
@@ -139,6 +171,11 @@ export function createStudentController(onRerender) {
     roomSession.disconnect();
     local.mode = 'self';
     snap = roomSession.getSnapshot();
+    setAnalyticsContext({
+      mode: 'self-paced',
+      roomCode: 'SELF_PACED',
+      name: local.studentName,
+    });
     onRerender();
   }
 
@@ -164,6 +201,21 @@ export function createStudentController(onRerender) {
     };
   }
 
+  function renderNameWidget() {
+    if (local.editingName || !local.studentName) {
+      return `
+        <form id="stu-inline-name-form" style="display:inline-flex; gap:6px; align-items:center;">
+          <input type="text" id="stu-inline-name" class="text-input serif" placeholder="Your name (attendance)" value="${escapeHtml(local.studentName)}" style="width:165px; padding:5px 8px; font-size:13px;" />
+          <button type="submit" class="btn sm">Save</button>
+        </form>`;
+    }
+    return `
+      <span style="font-size:13px; color:var(--ink-soft);">
+        Student: <b>${escapeHtml(local.studentName)}</b>
+        <button type="button" class="icon-btn" id="stu-edit-name-btn" style="padding:2px 6px; margin-left:4px;">Edit</button>
+      </span>`;
+  }
+
   function renderConnectionBar(pos) {
     if (local.mode === 'live' && snap.connected) {
       const transportLabel = snap.transport === 'firebase' ? 'Cloud Live Sync' : 'Local Multi-Tab Sync';
@@ -174,10 +226,12 @@ export function createStudentController(onRerender) {
             <span class="room-pill">Room ${escapeHtml(snap.roomCode)}</span>
             <span style="font-size:13.5px; color:var(--ink-soft);">
               ${pos.isSynced ? 'Following instructor screen' : 'Free navigation enabled'}
-              ${local.studentName ? ` · Signed in as <b>${escapeHtml(local.studentName)}</b>` : ''}
             </span>
           </div>
-          <button type="button" class="btn sm" id="stu-leave-room">Switch to Self-Paced</button>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            ${renderNameWidget()}
+            <button type="button" class="btn sm" id="stu-leave-room">Switch to Self-Paced</button>
+          </div>
         </div>`;
     }
 
@@ -195,11 +249,11 @@ export function createStudentController(onRerender) {
         ${
           local.mode === 'live'
             ? `<form class="join-inline" id="stu-join-form">
-                <input type="text" id="stu-name-input" class="text-input serif" placeholder="Your name (optional)" value="${escapeHtml(local.studentName)}" style="width:155px;" />
+                <input type="text" id="stu-name-input" class="text-input serif" placeholder="Your name" value="${escapeHtml(local.studentName)}" style="width:145px;" />
                 <input type="text" id="stu-code-input" class="text-input code-input" maxlength="8" placeholder="ROOM" value="${escapeHtml(local.joinCodeInput)}" required />
                 <button type="submit" class="btn sm primary" ${local.joining ? 'disabled' : ''}>${local.joining ? 'Joining…' : 'Join'}</button>
               </form>`
-            : ''
+            : renderNameWidget()
         }
         ${local.joinError ? `<p style="color:var(--accent-ink); font-size:13px; width:100%; margin:4px 0 0;">${escapeHtml(local.joinError)}</p>` : ''}
       </div>`;
@@ -243,6 +297,10 @@ export function createStudentController(onRerender) {
     const pane = shown === 'normal' ? item.normal : item.abnormal;
     const mediaKey = `${item.id}:${shown}`;
     const ov = snap.connected ? snap.mediaOverrides : null;
+    const revFeatures = local.orientFeaturesRevealed[mediaKey] || new Set();
+    const oriCallout = local.activeOriCallout[mediaKey] || null;
+    const annotations = snap.connected ? (snap.state.annotations?.[mediaKey] || []) : [];
+    const livePointer = snap.connected ? snap.state.livePointer : null;
 
     const vis = renderOrientationVisual({
       itemId: item.id,
@@ -250,6 +308,10 @@ export function createStudentController(onRerender) {
       mediaMode: local.orientMediaMode[mediaKey] || null,
       roomOverrides: ov,
       onToggleModeAttr: `data-ori-media-key="${escapeHtml(mediaKey)}"`,
+      features: pane.features || [],
+      revealedFeatures: revFeatures,
+      annotations,
+      livePointer,
     });
 
     const dots = ORIENTATION.map((o, i) => {
@@ -264,7 +326,7 @@ export function createStudentController(onRerender) {
       <div class="stage active">
         <p class="stage-kicker">Before any patient — build the baseline</p>
         <h2 class="stage-title">Normal vs. abnormal, one structure at a time</h2>
-        <p class="hint">No diagnoses here yet. Flip between normal and abnormal until the difference is obvious.</p>
+        <p class="hint">No diagnoses here yet. Flip between normal and abnormal, zoom in to inspect details, and click any numbered feature pin.</p>
         <div class="orient-progress">${dots}</div>
         <div class="orient-card">
           <span class="res-tag">${escapeHtml(item.resolution)} resolution · ${escapeHtml(item.organ)}</span>
@@ -281,6 +343,13 @@ export function createStudentController(onRerender) {
               <span>${escapeHtml(vis.entry?.caption || '')}</span>
               ${vis.attrLine}
             </div>
+          </div>
+          <div id="stu-ori-callout">
+            ${
+              oriCallout
+                ? `<div class="zone-callout"><b>Feature ${oriCallout.idx + 1} — ${escapeHtml(oriCallout.feat.label)}.</b> ${escapeHtml(oriCallout.feat.finding)}</div>`
+                : ''
+            }
           </div>
           <ul class="observe-points">
             ${pane.points.map((p) => `<li><span class="${p.ok ? 'ok' : 'bad'}">${p.ok ? '✓' : '×'}</span><span>${escapeHtml(p.text)}</span></li>`).join('')}
@@ -421,8 +490,9 @@ export function createStudentController(onRerender) {
       const allDone = revealedSet.size >= zones.length;
       const medOpen = Boolean(local.mediatorsOpen[c.id]);
       const spotlightId = snap.connected ? snap.state.spotlightZoneId : null;
+      const annotations = snap.connected ? (snap.state.annotations?.[c.id] || []) : [];
+      const livePointer = snap.connected ? snap.state.livePointer : null;
 
-      // Update active callout only when the instructor's spotlight changes to a new zone
       if (spotlightId && spotlightId !== lastInstructorSpotlightId) {
         const sIdx = zones.findIndex((z) => z.id === spotlightId);
         if (sIdx >= 0) {
@@ -437,13 +507,15 @@ export function createStudentController(onRerender) {
         <div class="stage active">
           <p class="stage-kicker">Explain</p>
           <h2 class="stage-title">${escapeHtml(c.image.placeholderLabel)}</h2>
-          <p class="hint">Scan systematically: lumen/surface to outer wall. Click each numbered pin to inspect the finding.</p>
+          <p class="hint">Zoom in to inspect cellular details, pan by dragging, and click each numbered pin to examine the finding.</p>
           ${renderCaseSlideViewer({
             caseObj: c,
             revealedZones: revealedSet,
             mediaMode: local.caseMediaMode[c.id] || null,
             spotlightZoneId: spotlightId,
             roomOverrides: ov,
+            annotations,
+            livePointer,
           })}
           <div id="stu-zone-callout">
             ${
@@ -543,8 +615,27 @@ export function createStudentController(onRerender) {
     const c = CASES[pos.caseIdx] || CASES[0];
     const ov = snap.connected ? snap.mediaOverrides : null;
 
+    // Name edit / save
+    container.querySelector('#stu-edit-name-btn')?.addEventListener('click', () => {
+      local.editingName = true;
+      onRerender();
+    });
+    container.querySelector('#stu-inline-name-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const val = container.querySelector('#stu-inline-name')?.value?.trim() || '';
+      local.studentName = val;
+      local.editingName = !val;
+      persistLocal();
+      setAnalyticsContext({ name: local.studentName });
+      if (local.mode === 'live' && snap.connected) {
+        await roomSession.connect(snap.roomCode, 'student', local.studentName || 'Student', false);
+      }
+      onRerender();
+    });
+
     container.querySelector('#stu-mode-self')?.addEventListener('click', () => {
       local.mode = 'self';
+      setAnalyticsContext({ mode: 'self-paced', roomCode: 'SELF_PACED' });
       onRerender();
     });
     container.querySelector('#stu-mode-live')?.addEventListener('click', () => {
@@ -582,29 +673,56 @@ export function createStudentController(onRerender) {
       });
     });
 
-    // Orientation controls
+    // Orientation controls + interactive viewer
+    if (pos.view === 'orient') {
+      const item = ORIENTATION[pos.orientIdx] || ORIENTATION[0];
+      const shown = local.orientPairShown[item.id] || (pos.isSynced ? snap.state.orientPair : 'normal') || 'normal';
+      const pane = shown === 'normal' ? item.normal : item.abnormal;
+      const mediaKey = `${item.id}:${shown}`;
+
+      attachInteractiveViewer(container, mediaKey);
+
+      container.querySelectorAll(`#ori-wrap-${item.id} .zone-pin`).forEach((pin) => {
+        pin.addEventListener('click', () => {
+          const featId = pin.dataset.zoneId;
+          const idx = Number(pin.dataset.zoneIdx);
+          const feat = (pane.features || []).find((f) => f.id === featId);
+          if (!feat) return;
+          if (!local.orientFeaturesRevealed[mediaKey]) local.orientFeaturesRevealed[mediaKey] = new Set();
+          local.orientFeaturesRevealed[mediaKey].add(featId);
+          local.activeOriCallout[mediaKey] = { idx, feat };
+          onRerender();
+        });
+      });
+    }
+
     container.querySelectorAll('[data-ori-pair]').forEach((btn) => {
       btn.addEventListener('click', () => {
         local.orientPairShown[btn.dataset.oriId] = btn.dataset.oriPair;
+        trackOrientFlip(btn.dataset.oriId, btn.dataset.oriPair);
         onRerender();
       });
     });
     container.querySelector('#ori-flip-btn')?.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.oriId;
       const cur = local.orientPairShown[id] || 'normal';
-      local.orientPairShown[id] = cur === 'normal' ? 'abnormal' : 'normal';
+      const next = cur === 'normal' ? 'abnormal' : 'normal';
+      local.orientPairShown[id] = next;
+      trackOrientFlip(id, next);
       onRerender();
     });
     container.querySelectorAll('[data-ori-media-key] button').forEach((btn) => {
       btn.addEventListener('click', () => {
         const key = btn.closest('[data-ori-media-key]').dataset.oriMediaKey;
         local.orientMediaMode[key] = btn.dataset.mediaMode;
+        trackMediaToggle(key, btn.dataset.mediaMode);
         onRerender();
       });
     });
     container.querySelector('#ori-done-btn')?.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.oriId;
       local.orientDone.add(id);
+      trackOrientComplete(id);
       if (local.orientIdx < ORIENTATION.length - 1) {
         local.orientIdx += 1;
       } else {
@@ -640,12 +758,14 @@ export function createStudentController(onRerender) {
 
     // Stage 0 Vignette explainer
     container.querySelector('#btn-explain-vignette')?.addEventListener('click', () => {
+      trackVignetteExplainer(c.id);
       openTutorDrawer({
         type: 'vignette',
         kicker: `${c.shortLabel} — Vignette walkthrough`,
         title: VIGNETTE_EXPLAINERS[c.id].title,
         data: VIGNETTE_EXPLAINERS[c.id],
         caseContext: `${c.shortLabel}: ${c.vignette.text}`,
+        onAskAI: () => trackAIQuestion(c.id),
       });
     });
 
@@ -662,12 +782,14 @@ export function createStudentController(onRerender) {
         const key = btn.dataset.whatsThis;
         const info = DIFFERENTIAL_EXPLAINERS[key];
         if (!info) return;
+        trackWhatsThis(c.id, key);
         openTutorDrawer({
           type: 'differential',
           kicker: 'Differential Diagnosis Refresher',
           title: info.term,
           data: info,
           caseContext: `${c.shortLabel}: ${c.vignette.text}`,
+          onAskAI: () => trackAIQuestion(c.id),
         });
       });
     });
@@ -681,6 +803,8 @@ export function createStudentController(onRerender) {
         alert('Pick one of the options first — committing to a hypothesis is the point.');
         return;
       }
+      const pick = local.picks[c.id];
+      trackHypothesisCommit(c.id, pick, pick === c.correctHypothesis, local.reasoning[c.id] || '');
       local.stage = 2;
       persistLocal();
       onRerender();
@@ -690,14 +814,20 @@ export function createStudentController(onRerender) {
         alert('Pick one of the options first before submitting your vote.');
         return;
       }
-      await roomSession.submitVote(c.id, local.picks[c.id], local.reasoning[c.id] || '', local.studentName || 'Student');
+      const pick = local.picks[c.id];
+      trackHypothesisCommit(c.id, pick, pick === c.correctHypothesis, local.reasoning[c.id] || '');
+      await roomSession.submitVote(c.id, pick, local.reasoning[c.id] || '', local.studentName || 'Student');
       onRerender();
     });
 
-    // Stage 2 Slide Viewer + Zones + Mediators
+    // Stage 2 Slide Viewer + Zoom + Zones + Mediators
+    if (pos.view === 'case' && pos.stage === 2) {
+      attachInteractiveViewer(container, c.id);
+    }
     container.querySelectorAll(`[data-case-media-toggle="${c.id}"] button`).forEach((btn) => {
       btn.addEventListener('click', () => {
         local.caseMediaMode[c.id] = btn.dataset.mediaMode;
+        trackMediaToggle(c.id, btn.dataset.mediaMode);
         onRerender();
       });
     });
@@ -710,12 +840,14 @@ export function createStudentController(onRerender) {
         if (!local.zonesRevealed[c.id]) local.zonesRevealed[c.id] = new Set();
         local.zonesRevealed[c.id].add(zoneId);
         local.activeZoneCallout[c.id] = { idx, zone };
+        trackZoneExamined(c.id, zoneId);
         persistLocal();
         onRerender();
       });
     });
     container.querySelector('#stu-med-toggle')?.addEventListener('click', () => {
       local.mediatorsOpen[c.id] = !local.mediatorsOpen[c.id];
+      if (local.mediatorsOpen[c.id]) trackMediatorsOpened(c.id);
       onRerender();
     });
 
@@ -725,6 +857,7 @@ export function createStudentController(onRerender) {
         const idx = Number(card.dataset.elabIdx);
         const guide = ELABORATE_GUIDES[c.id]?.[idx];
         if (!guide) return;
+        trackElaborateOpened(c.id, idx, guide.tag);
         openTutorDrawer({
           type: 'elaborate',
           kicker: `${c.shortLabel} — Guided Elaboration`,
@@ -732,6 +865,8 @@ export function createStudentController(onRerender) {
           data: guide,
           isInstructor: false,
           caseContext: `${c.shortLabel} (${c.diagnosis.name}): ${c.diagnosis.rationale}`,
+          onRevealAnswer: () => trackElaborateRevealed(c.id, idx),
+          onAskAI: () => trackAIQuestion(c.id),
         });
       });
     });
@@ -743,6 +878,7 @@ export function createStudentController(onRerender) {
     joinLiveRoom,
     destroy: () => {
       unsub();
+      studentAnalytics.destroy();
       if (roomSession.role === 'student') roomSession.disconnect();
     },
   };
