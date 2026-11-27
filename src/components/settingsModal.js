@@ -98,15 +98,18 @@ export function openSettingsModal(onSaved) {
         </div>
 
         <div class="drawer-section">
-          <h4>3. Optional Live AI Tutor (for open-ended Q&amp;A)</h4>
-          <p class="hint" style="margin:4px 0 8px;">Curated medical explanations work without any API key. Optionally attach a Gemini key (local browser only) or backend proxy.</p>
+          <h4>3. Live AI Pathology Tutor</h4>
+          <p class="hint" style="margin:4px 0 8px;">
+            Currently using: <b>${ai.provider === 'proxy' && ai.proxyUrl ? `Hosted Secure Proxy (${ai.source === 'embedded' ? 'default' : 'custom'})` : ai.provider === 'gemini' ? 'Browser Gemini Key' : 'Disabled (curated only)'}</b>.
+            The default Cloudflare Worker proxy keeps the API key hidden server-side with rate limiting and IMC 530 topic guardrails.
+          </p>
           <select id="ai-provider" class="text-input" style="width:100%; margin-bottom:8px;">
+            <option value="proxy" ${ai.provider === 'proxy' ? 'selected' : ''}>Hosted Secure Proxy (Recommended)</option>
             <option value="none" ${ai.provider === 'none' ? 'selected' : ''}>Disabled (Curated explanations only)</option>
             <option value="gemini" ${ai.provider === 'gemini' ? 'selected' : ''}>Gemini API Key (browser-side)</option>
-            <option value="proxy" ${ai.provider === 'proxy' ? 'selected' : ''}>Custom Backend Proxy URL</option>
           </select>
-          <input type="password" id="ai-gemini-key" class="text-input" style="width:100%; margin-bottom:8px;" placeholder="Gemini API key (AIza...)" value="${escapeHtml(ai.geminiKey || '')}" />
-          <input type="url" id="ai-proxy-url" class="text-input" style="width:100%; margin-bottom:8px;" placeholder="https://your-worker.example.com/tutor" value="${escapeHtml(ai.proxyUrl || '')}" />
+          <input type="url" id="ai-proxy-url" class="text-input" style="width:100%; margin-bottom:8px;" placeholder="https://imc530-ai-tutor.imc530-ub-pathology.workers.dev" value="${escapeHtml(ai.proxyUrl || '')}" />
+          <input type="password" id="ai-gemini-key" class="text-input" style="width:100%; margin-bottom:8px;" placeholder="Optional browser-only Gemini API key" value="${escapeHtml(ai.geminiKey || '')}" />
           <button type="button" class="btn sm" id="ai-save-btn">Save AI Settings</button>
           <p id="ai-status-msg" style="font-size:12.5px; margin:8px 0 0; color:var(--vital-ink);"></p>
         </div>

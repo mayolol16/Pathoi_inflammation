@@ -2,6 +2,8 @@ import './styles/main.css';
 import { createStudentController } from './views/studentView.js';
 import { createInstructorController } from './views/instructorView.js';
 import { preloadCatalogImages } from './data/mediaCatalog.js';
+import { openTutorDrawer } from './components/tutorDrawer.js';
+import { isLiveAIConfigured } from './services/aiTutor.js';
 import { getTheme, setTheme } from './services/storage.js';
 
 const appRoot = document.getElementById('app');
@@ -40,6 +42,7 @@ function mountShell() {
         <div class="kicker">
           <span>IMC 530 · Acute &amp; chronic inflammation · UB Jacobs School of Medicine</span>
           <div class="header-actions">
+            ${isLiveAIConfigured() ? `<button type="button" class="icon-btn" id="global-ai-tutor-btn" title="Ask the IMC 530 Pathology AI Tutor">AI Tutor ✦</button>` : ''}
             <button type="button" class="icon-btn" id="theme-toggle-btn" title="Cycle theme"></button>
             ${
               isInst
@@ -64,6 +67,15 @@ function mountShell() {
     </div>`;
 
   updateThemeButton();
+  appRoot.querySelector('#global-ai-tutor-btn')?.addEventListener('click', () => {
+    openTutorDrawer({
+      type: 'ai-chat',
+      kicker: 'Live AI Tutor · IMC 530',
+      title: 'Ask the Pathology AI Tutor',
+      caseContext:
+        'UB Jacobs School of Medicine IMC 530 — Acute & Chronic Inflammation. Cases: (1) Acute Suppurative Appendicitis, (2) Bleeding Chronic Peptic Ulcer, (3) Tuberculous Caseating Granuloma, plus Normal vs. Abnormal tissue orientation.',
+    });
+  });
   appRoot.querySelector('#theme-toggle-btn')?.addEventListener('click', () => {
     const cur = getTheme();
     const next = cur === 'auto' ? 'dark' : cur === 'dark' ? 'light' : 'auto';

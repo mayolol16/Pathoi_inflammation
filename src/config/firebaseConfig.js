@@ -78,13 +78,22 @@ export function saveInstructorPasscode(newCode) {
   }
 }
 
+export const DEFAULT_AI_PROXY_URL = 'https://imc530-ai-tutor.imc530-ub-pathology.workers.dev';
+
 export function getAISettings() {
   try {
     const raw = localStorage.getItem(AI_SETTINGS_LS_KEY);
-    return raw ? JSON.parse(raw) : { provider: 'none', geminiKey: '', proxyUrl: '' };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.provider) {
+        return parsed;
+      }
+    }
   } catch {
-    return { provider: 'none', geminiKey: '', proxyUrl: '' };
+    // ignore storage read error
   }
+  const envProxy = import.meta.env.VITE_AI_PROXY_URL || DEFAULT_AI_PROXY_URL;
+  return { provider: 'proxy', geminiKey: '', proxyUrl: envProxy, source: 'embedded' };
 }
 
 export function saveAISettings(settings) {

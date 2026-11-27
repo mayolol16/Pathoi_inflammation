@@ -3,7 +3,7 @@ import { escapeHtml } from '../utils/html.js';
 
 let drawerRoot = null;
 let currentPayload = null;
-let aiAnswerState = { loading: false, text: '', error: '' };
+let aiAnswerState = { loading: false, history: [], error: '', lastSentAt: 0 };
 let revealAnswerOpen = false;
 let escHandler = null;
 
@@ -28,7 +28,7 @@ export function closeTutorDrawer() {
 export function openTutorDrawer(payload) {
   currentPayload = payload;
   revealAnswerOpen = false;
-  aiAnswerState = { loading: false, text: '', error: '' };
+  aiAnswerState = { loading: false, history: [], error: '', lastSentAt: 0 };
   if (escHandler) window.removeEventListener('keydown', escHandler);
   escHandler = (e) => {
     if (e.key === 'Escape') closeTutorDrawer();
@@ -127,23 +127,55 @@ function renderDrawer() {
         <h4>Socratic question to ask before revealing the slide</h4>
         <p style="margin:0; font-size:15px;"><b>"${escapeHtml(tp.socraticQuestion)}"</b></p>
       </div>`;
+  } else if (p.type === 'ai-chat') {
+    bodyHtml = `
+      <div class="drawer-section" style="border-left:4px solid var(--accent);">
+        <h4>IMC 530 Pathology AI Tutor</h4>
+        <p style="margin:0; font-size:14px; color:var(--ink-soft);">
+          Ask any question about acute vs. chronic inflammation, the 3 clinical cases, histology findings, or mediator pathways. Responses are scoped to IMC 530 medical concepts.
+        </p>
+      </div>`;
   }
 
   const aiAvailable = isLiveAIConfigured();
+  const historyHtml = aiAnswerState.history.length
+    ? `<div style="display:flex; flex-direction:column; gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
+        ${aiAnswerState.history
+          .map(
+            (turn) => `
+            <div style="padding:10px 12px; border-radius:4px; font-size:14px; white-space:pre-line; ${
+              turn.role === 'user'
+                ? 'background:var(--bg); border:1px solid var(--line); align-self:flex-end; max-width:92%;'
+                : 'background:var(--vital-soft); border:1px solid var(--vital); color:var(--ink);'
+            }">
+              <div style="font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); margin-bottom:4px;">
+                ${turn.role === 'user' ? 'You' : 'Pathology AI Tutor'}
+              </div>
+              ${escapeHtml(turn.text)}
+            </div>`
+          )
+          .join('')}
+      </div>`
+    : '';
+
   const aiBlock = `
     <div class="drawer-section" style="margin-top:8px;">
-      <h4>Ask a follow-up (Optional Live AI)</h4>
+      <h4>${p.type === 'ai-chat' ? 'Ask a question' : 'Ask a follow-up (Live AI Tutor)'}</h4>
       ${
         aiAvailable
-          ? `<textarea id="drawer-ai-input" class="reasoning" style="min-height:56px; margin-top:4px;" placeholder="Ask a follow-up question about this case..."></textarea>
-             <div class="btn-row" style="margin-top:8px;">
-               <button type="button" class="btn sm primary" id="drawer-ai-send" ${aiAnswerState.loading ? 'disabled' : ''}>
-                 ${aiAnswerState.loading ? 'Thinking…' : 'Ask Live AI'}
-               </button>
+          ? `<textarea id="drawer-ai-input" class="reasoning" maxlength="600" style="min-height:60px; margin-top:4px;" placeholder="e.g., Why do neutrophils predominate in acute appendicitis while macrophages dominate in TB?"></textarea>
+             <div class="btn-row" style="margin-top:8px; justify-content:space-between; align-items:center;">
+               <div style="display:flex; gap:8px; align-items:center;">
+                 <button type="button" class="btn sm primary" id="drawer-ai-send" ${aiAnswerState.loading ? 'disabled' : ''}>
+                   ${aiAnswerState.loading ? 'Thinking…' : 'Ask AI Tutor'}
+                 </button>
+                 ${aiAnswerState.history.length ? `<button type="button" class="btn sm" id="drawer-ai-clear">Clear chat</button>` : ''}
+               </div>
+               <span style="font-family:var(--mono); font-size:11px; color:var(--ink-faint);">Max 600 chars · IMC 530 scoped</span>
              </div>
              ${aiAnswerState.error ? `<p style="color:var(--accent-ink); font-size:13px; margin:8px 0 0;">${escapeHtml(aiAnswerState.error)}</p>` : ''}
-             ${aiAnswerState.text ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); font-size:14px; white-space:pre-line;">${escapeHtml(aiAnswerState.text)}</div>` : ''}`
-          : `<p class="empty-note" style="margin:4px 0 0;">All core medical explanations above work 100% offline. To enable open-ended Live AI Q&amp;A, add a Gemini API key or proxy URL in Instructor → Sync &amp; Settings.</p>`
+             ${historyHtml}`
+          : `<p class="empty-note" style="margin:4px 0 0;">All core medical explanations above work 100% offline. Live AI Q&amp;A is currently disabled in Instructor → Sync &amp; Settings.</p>`
       }
     </div>`;
 
@@ -173,18 +205,54 @@ function renderDrawer() {
     }
     renderDrawer();
   });
-  root.querySelector('#drawer-ai-send')?.addEventListener('click', async () => {
+
+  async function submitAIQuestion() {
+    if (aiAnswerState.loading) return;
+    const now = Date.now();
+    if (now - aiAnswerState.lastSentAt < 3000) {
+      aiAnswerState = { ...aiAnswerState, error: 'Please wait a moment before sending another question.' };
+      renderDrawer();
+      return;
+    }
     const q = root.querySelector('#drawer-ai-input')?.value?.trim();
     if (!q) return;
     if (typeof p.onAskAI === 'function') p.onAskAI(q);
-    aiAnswerState = { loading: true, text: '', error: '' };
+    const priorHistory = [...aiAnswerState.history];
+    aiAnswerState = {
+      loading: true,
+      history: [...priorHistory, { role: 'user', text: q }],
+      error: '',
+      lastSentAt: now,
+    };
     renderDrawer();
     try {
-      const answer = await askLiveAI(q, p.caseContext || p.title);
-      aiAnswerState = { loading: false, text: answer, error: '' };
+      const answer = await askLiveAI(q, p.caseContext || p.title, priorHistory);
+      aiAnswerState = {
+        ...aiAnswerState,
+        loading: false,
+        history: [...aiAnswerState.history, { role: 'model', text: answer }],
+        error: '',
+      };
     } catch (err) {
-      aiAnswerState = { loading: false, text: '', error: err.message };
+      aiAnswerState = {
+        ...aiAnswerState,
+        loading: false,
+        history: priorHistory,
+        error: err.message || 'Could not reach AI tutor.',
+      };
     }
+    renderDrawer();
+  }
+
+  root.querySelector('#drawer-ai-send')?.addEventListener('click', submitAIQuestion);
+  root.querySelector('#drawer-ai-input')?.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      submitAIQuestion();
+    }
+  });
+  root.querySelector('#drawer-ai-clear')?.addEventListener('click', () => {
+    aiAnswerState = { loading: false, history: [], error: '', lastSentAt: 0 };
     renderDrawer();
   });
 }
