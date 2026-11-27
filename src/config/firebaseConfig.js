@@ -81,21 +81,28 @@ export function saveInstructorPasscode(newCode) {
 export const DEFAULT_AI_PROXY_URL = 'https://imc530-ai-tutor.imc530-ub-pathology.workers.dev';
 
 export function getAISettings() {
+  const envProxy = import.meta.env.VITE_AI_PROXY_URL || DEFAULT_AI_PROXY_URL;
   try {
     const raw = localStorage.getItem(AI_SETTINGS_LS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.provider) {
+        // Auto-upgrade legacy pre-proxy 'none' entries unless explicitly disabled after proxy rollout
+        if (parsed.provider === 'none' && !parsed.explicit) {
+          return { provider: 'proxy', geminiKey: '', proxyUrl: envProxy, source: 'embedded' };
+        }
+        if (parsed.provider === 'proxy' && !parsed.proxyUrl) {
+          return { ...parsed, proxyUrl: envProxy, source: 'embedded' };
+        }
         return parsed;
       }
     }
   } catch {
     // ignore storage read error
   }
-  const envProxy = import.meta.env.VITE_AI_PROXY_URL || DEFAULT_AI_PROXY_URL;
   return { provider: 'proxy', geminiKey: '', proxyUrl: envProxy, source: 'embedded' };
 }
 
 export function saveAISettings(settings) {
-  localStorage.setItem(AI_SETTINGS_LS_KEY, JSON.stringify(settings));
+  localStorage.setItem(AI_SETTINGS_LS_KEY, JSON.stringify({ ...settings, explicit: true }));
 }

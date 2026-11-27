@@ -42,7 +42,7 @@ function mountShell() {
         <div class="kicker">
           <span>IMC 530 · Acute &amp; chronic inflammation · UB Jacobs School of Medicine</span>
           <div class="header-actions">
-            ${isLiveAIConfigured() ? `<button type="button" class="icon-btn" id="global-ai-tutor-btn" title="Ask the IMC 530 Pathology AI Tutor">AI Tutor ✦</button>` : ''}
+            ${isLiveAIConfigured() ? `<button type="button" class="btn sm primary" id="global-ai-tutor-btn" title="Ask the IMC 530 Pathology AI Tutor">✦ Ask AI Tutor</button>` : ''}
             <button type="button" class="icon-btn" id="theme-toggle-btn" title="Cycle theme"></button>
             ${
               isInst

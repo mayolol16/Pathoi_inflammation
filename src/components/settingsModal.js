@@ -155,5 +155,6 @@ export function openSettingsModal(onSaved) {
     saveAISettings({ provider, geminiKey, proxyUrl });
     const msg = root.querySelector('#ai-status-msg');
     if (msg) msg.textContent = 'AI Tutor settings saved.';
+    if (onSaved) onSaved('ai');
   });
 }
