@@ -1,6 +1,7 @@
 import './styles/main.css';
 import { createStudentController } from './views/studentView.js';
 import { createInstructorController } from './views/instructorView.js';
+import { createTakeHomeController } from './views/takeHomeView.js';
 import { preloadCatalogImages } from './data/mediaCatalog.js';
 import { openTutorDrawer } from './components/tutorDrawer.js';
 import { isLiveAIConfigured } from './services/aiTutor.js';
@@ -18,6 +19,7 @@ preloadCatalogImages();
 function parseHash() {
   const raw = window.location.hash || '#/';
   const path = raw.replace(/^#/, '');
+  if (path.startsWith('/take-home') || path.startsWith('/step1')) return { route: 'take-home' };
   if (path.startsWith('/instructor')) return { route: 'instructor', tab: 'classroom' };
   if (path.startsWith('/analytics')) return { route: 'instructor', tab: 'analytics' };
   if (path.startsWith('/verify')) return { route: 'instructor', tab: 'verify' };
@@ -36,29 +38,32 @@ function updateThemeButton() {
 
 function mountShell() {
   const isInst = activeRoute === 'instructor';
+  const isTakeHome = activeRoute === 'take-home';
   appRoot.innerHTML = `
     <div class="wrap">
       <div class="masthead">
         <div class="kicker">
           <span>IMC 530 · Acute &amp; chronic inflammation · UB Jacobs School of Medicine</span>
-          <div class="header-actions">
+          <div class="header-actions no-print">
             ${isLiveAIConfigured() ? `<button type="button" class="btn sm primary" id="global-ai-tutor-btn" title="Ask the IMC 530 Pathology AI Tutor">✦ Ask AI Tutor</button>` : ''}
+            <a href="#/take-home" class="icon-btn ${isTakeHome ? 'active' : ''}" title="High-Yield Take-Home &amp; USMLE Step 1 Summary">Take-Home / Step 1</a>
             <button type="button" class="icon-btn" id="theme-toggle-btn" title="Cycle theme"></button>
             ${
-              isInst
+              isInst || isTakeHome
                 ? `<a href="#/" class="icon-btn">Student View ↗</a>`
                 : `<a href="#/instructor" class="icon-btn">Instructor Console</a>`
             }
           </div>
         </div>
         <h1>Pathology of acute &amp; chronic inflammation</h1>
-        <p class="sub">Three guided cases. Look first, name second.</p>
+        <p class="sub">${isTakeHome ? 'High-yield take-home summary &amp; USMLE Step 1 rapid review.' : 'Three guided cases. Look first, name second.'}</p>
       </div>
       <div id="view-root"></div>
-      <footer class="site-footer instructor-only">
+      <footer class="site-footer instructor-only no-print">
         <span>UB Jacobs School of Medicine · IMC 530 Active Learning</span>
         <span>
           <a href="#/">Student View</a> ·
+          <a href="#/take-home">Take-Home / Step 1</a> ·
           <a href="#/instructor">Instructor Console</a> ·
           <a href="#/analytics">Student Analytics</a> ·
           <a href="#/verify">Verify Images &amp; Pins</a>
@@ -102,6 +107,8 @@ function syncRoute() {
     activeRoute = parsed.route;
     if (parsed.route === 'instructor') {
       activeController = createInstructorController(rerenderView, parsed.tab);
+    } else if (parsed.route === 'take-home') {
+      activeController = createTakeHomeController(rerenderView);
     } else {
       activeController = createStudentController(rerenderView);
     }
