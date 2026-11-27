@@ -2,7 +2,30 @@ const FIREBASE_LS_KEY = 'imc530_firebase_config';
 const PASSCODE_LS_KEY = 'imc530_instructor_passcode';
 const AI_SETTINGS_LS_KEY = 'imc530_ai_settings';
 
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyAhSAtH8zRp892iRPMduOtg0zlMsUAg5eg',
+  authDomain: 'immunopatho-5bfec.firebaseapp.com',
+  databaseURL: 'https://immunopatho-5bfec-default-rtdb.firebaseio.com',
+  projectId: 'immunopatho-5bfec',
+  storageBucket: 'immunopatho-5bfec.firebasestorage.app',
+  messagingSenderId: '939279007810',
+  appId: '1:939279007810:web:f04b414eb5d453bcd92ddb',
+};
+
 export function getFirebaseConfig() {
+  try {
+    const raw = localStorage.getItem(FIREBASE_LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.disabled) return null;
+      if (parsed.apiKey && parsed.databaseURL && parsed.projectId) {
+        return { ...parsed, source: 'local' };
+      }
+    }
+  } catch {
+    // ignore storage read error
+  }
+
   const envCfg = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
@@ -17,18 +40,7 @@ export function getFirebaseConfig() {
     return { ...envCfg, source: 'env' };
   }
 
-  try {
-    const raw = localStorage.getItem(FIREBASE_LS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.apiKey && parsed.databaseURL && parsed.projectId) {
-        return { ...parsed, source: 'local' };
-      }
-    }
-  } catch {
-    // ignore storage read error
-  }
-  return null;
+  return { ...DEFAULT_FIREBASE_CONFIG, source: 'embedded' };
 }
 
 export function isFirebaseConfigured() {
@@ -40,7 +52,7 @@ export function saveFirebaseConfig(cfg) {
 }
 
 export function clearFirebaseConfig() {
-  localStorage.removeItem(FIREBASE_LS_KEY);
+  localStorage.setItem(FIREBASE_LS_KEY, JSON.stringify({ disabled: true }));
 }
 
 export function getInstructorPasscode() {
